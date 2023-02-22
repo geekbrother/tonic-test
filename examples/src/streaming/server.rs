@@ -100,8 +100,21 @@ impl pb::echo_server::Echo for EchoServer {
         println!("EchoServer::bidirectional_streaming_echo");
 
         let mut in_stream = req.into_inner();
-        let (tx, rx) = mpsc::channel(128);
+        let (tx, rx) = mpsc::channel(1);
 
+        let tx_spawned = tx.clone();
+        tokio::spawn(async move {
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                println!("Sending reponse to the tx every 3 sec");
+                tx_spawned
+                    .send(Ok(EchoResponse { message: "3 seconds message".to_string() }))
+                    .await
+                    .unwrap();
+                println!("Sent");
+            }
+        });
+        
         // this spawn here is required if you want to handle connection error.
         // If we just map `in_stream` and write it back as `out_stream` the `out_stream`
         // will be drooped when connection error occurs and error will never be propagated
