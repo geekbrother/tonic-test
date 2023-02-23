@@ -102,19 +102,44 @@ impl pb::echo_server::Echo for EchoServer {
         let mut in_stream = req.into_inner();
         let (tx, rx) = mpsc::channel(1);
 
+        // Wrong calling of the blocking function (i.e. from CXX) from the Tokio task:
+        // This will cause to wait running of the async tasks inside only after
+        // the blocking functions returns.
+        // As a result tx.send will be called only when the channel buffer + 1 is reached.
+        // instead on every loop as expected, but `prinln!` will print on every loop, which
+        // is confusing.
         let tx_spawned = tx.clone();
         tokio::spawn(async move {
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(3));
-                println!("Sending reponse to the tx every 3 sec");
+                println!("Sending reponse to the tx every 3 sec on wrong loop");
                 tx_spawned
-                    .send(Ok(EchoResponse { message: "3 seconds message".to_string() }))
+                    .send(Ok(EchoResponse { message: "3 seconds message from wrong loop".to_string() }))
                     .await
                     .unwrap();
-                println!("Sent");
             }
         });
-        
+
+        // Correct calling of the blocking function (i.e. from CXX) from the Tokio task:
+        // We should make a blocking call as an async function by wraping it to the
+        // `spawn_blocking`.
+        // In this scenario tx.send will be called on every loop (every 3 seconds).
+        let tx_spawned = tx.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::task::spawn_blocking(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                  })
+                .await
+                .unwrap();
+                println!("Sending reponse to the tx every 3 sec from correct loop");
+                tx_spawned
+                    .send(Ok(EchoResponse { message: "3 seconds message from correct loop".to_string() }))
+                    .await
+                    .unwrap();
+            }
+        });
+
         // this spawn here is required if you want to handle connection error.
         // If we just map `in_stream` and write it back as `out_stream` the `out_stream`
         // will be drooped when connection error occurs and error will never be propagated
